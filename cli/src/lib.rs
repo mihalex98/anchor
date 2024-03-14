@@ -33,6 +33,7 @@ use solana_sdk::bpf_loader;
 use solana_sdk::bpf_loader_deprecated;
 use solana_sdk::bpf_loader_upgradeable::{self, UpgradeableLoaderState};
 use solana_sdk::commitment_config::CommitmentConfig;
+use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use solana_sdk::signature::Signer;
@@ -58,6 +59,7 @@ pub mod solidity_template;
 // Version of the docker image.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DOCKER_BUILDER_VERSION: &str = VERSION;
+const PRIORITY_FEE: u64 = 25_000;
 
 #[derive(Debug, Parser)]
 #[clap(version = VERSION)]
@@ -2245,7 +2247,7 @@ fn idl_set_buffer(
             // Build the transaction.
             let latest_hash = client.get_latest_blockhash()?;
             let tx = Transaction::new_signed_with_payer(
-                &[ix],
+                &[ix, ComputeBudgetInstruction::set_compute_unit_price(PRIORITY_FEE)],
                 Some(&keypair.pubkey()),
                 &[&keypair],
                 latest_hash,
@@ -2404,7 +2406,7 @@ fn idl_close_account(
         // Send transaction.
         let latest_hash = client.get_latest_blockhash()?;
         let tx = Transaction::new_signed_with_payer(
-            &[ix],
+            &[ix, ComputeBudgetInstruction::set_compute_unit_price(PRIORITY_FEE)],
             Some(&keypair.pubkey()),
             &[&keypair],
             latest_hash,
@@ -2437,7 +2439,7 @@ fn idl_write(cfg: &Config, program_id: &Pubkey, idl: &Idl, idl_address: Pubkey) 
         e.finish()?
     };
 
-    const MAX_WRITE_SIZE: usize = 1000;
+    const MAX_WRITE_SIZE: usize = 900;
     let mut offset = 0;
     while offset < idl_data.len() {
         // Instruction data.
@@ -2462,7 +2464,7 @@ fn idl_write(cfg: &Config, program_id: &Pubkey, idl: &Idl, idl_address: Pubkey) 
         // Send transaction.
         let latest_hash = client.get_latest_blockhash()?;
         let tx = Transaction::new_signed_with_payer(
-            &[ix],
+            &[ix, ComputeBudgetInstruction::set_compute_unit_price(PRIORITY_FEE)],
             Some(&keypair.pubkey()),
             &[&keypair],
             latest_hash,
@@ -3890,7 +3892,7 @@ fn create_idl_buffer(
     // Build the transaction.
     let latest_hash = client.get_latest_blockhash()?;
     let tx = Transaction::new_signed_with_payer(
-        &[create_account_ix, create_buffer_ix],
+        &[create_account_ix, create_buffer_ix, ComputeBudgetInstruction::set_compute_unit_price(PRIORITY_FEE)],
         Some(&keypair.pubkey()),
         &[&keypair, &buffer],
         latest_hash,
