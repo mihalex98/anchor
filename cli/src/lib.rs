@@ -21,7 +21,8 @@ use reqwest::blocking::Client;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value as JsonValue};
-use solana_client::rpc_client::RpcClient;
+use solana_client::rpc_client::{RpcClient, SerializableTransaction};
+use solana_client::rpc_config::RpcSendTransactionConfig;
 use solana_program::instruction::{AccountMeta, Instruction};
 use solana_sdk::account_utils::StateMut;
 use solana_sdk::bpf_loader;
@@ -43,6 +44,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::str::FromStr;
 use std::string::ToString;
+use std::thread::sleep;
+use std::time::Duration;
 use tar::Archive;
 
 pub mod config;
@@ -2032,7 +2035,7 @@ fn idl_set_buffer(
                 let tx_hash = client.simulate_transaction(&tx)?.value;
                 println!("tx_hash, {:?} ", tx_hash);
 
-                match client.send_and_confirm_transaction_with_spinner(&tx) {
+                match send_transaction(&tx, &client) {
                     Ok(_) => break,
                     Err(e) => {
                         if retry_transactions == 19 {
@@ -2280,10 +2283,7 @@ fn idl_write(
                 latest_hash,
             );
 
-            let tx_hash = client.simulate_transaction(&tx)?.value;
-            println!("tx_hash, {:?} ", tx_hash);
-
-            match client.send_and_confirm_transaction_with_spinner(&tx) {
+            match send_transaction(&tx, &client) {
                 Ok(_) => break,
                 Err(e) => {
                     if retry_transactions == 19 {
@@ -3345,7 +3345,7 @@ fn create_idl_account(
             &[&keypair],
             latest_hash,
         );
-        client.send_and_confirm_transaction_with_spinner(&tx)?;
+        send_transaction(&tx, &client).unwrap();
     }
 
     // Write directly to the IDL account buffer.
@@ -3417,7 +3417,7 @@ fn create_idl_buffer(
             &[&keypair, &buffer],
             latest_hash,
         );
-        match client.send_and_confirm_transaction_with_spinner(&tx) {
+        match send_transaction(&tx, &client) {
             Ok(_) => break,
             Err(err) => {
                 if retries == 4 {
@@ -4170,3 +4170,46 @@ fn prepend_compute_unit_ix(
     }
 }
 
+
+pub(crate) fn send_transaction(
+  transaction: &Transaction,
+  client: &RpcClient,
+) -> solana_client::client_error::Result<()> {
+    let result = client.simulate_transaction(transaction)?;
+    println!("Simulate result: {:#?}", result.value);
+    if result.value.err.is_some() {
+        return Err(result.value.err.unwrap().into());
+    }
+    println!("Attempt signature: {}", transaction.get_signature());
+    let mut attempt_nb = 0;
+    loop {
+        attempt_nb += 1;
+        print!("\rAttempt {attempt_nb}...");
+        let _ = std::io::stdout().flush();
+
+        if !client.is_blockhash_valid(
+            transaction.get_recent_blockhash(),
+            CommitmentConfig::processed(),
+        )? {
+            println!("Blockhash is expired...");
+            break;
+        }
+        let signature = client.send_transaction_with_config(
+            transaction,
+            RpcSendTransactionConfig {
+                skip_preflight: true,
+                max_retries: Some(0),
+                ..Default::default()
+            },
+        )?;
+
+        sleep(Duration::from_millis(1600));
+        let status = client
+            .confirm_transaction_with_commitment(&signature, CommitmentConfig::processed())?;
+        if status.value {
+            println!("Transaction confirmed");
+            break;
+        }
+    }
+  Ok(())
+}
